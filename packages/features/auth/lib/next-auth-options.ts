@@ -330,26 +330,39 @@ export async function authorizePhoneOtp(
     user = await userRepo.findByPhoneNumberAndIncludeProfiles({ phoneNumber: created.phoneNumber! });
   }
   if (!user) throw new Error(ErrorCode.InternalServerError);
-
-  // Staff onboarding: an org owner creates the User row (phone + pending
-  // Membership) before the staff member ever logs in — this successful OTP
-  // login IS their acceptance of that invite, so flip it to accepted here.
-  // Known limitation: if this phone number already has an unrelated
-  // account and someone invites it without the holder's knowledge, their
-  // next routine login would also accept that invite silently — acceptable
-  // for v1 (matches the confirmed "staff self-verifies via OTP" design),
-  // not addressed with an explicit accept/decline step yet.
-  const pendingMemberships = user.teams.filter((m) => !m.accepted);
-  if (pendingMemberships.length > 0) {
-    await prisma.membership.updateMany({
-      where: { userId: user.id, accepted: false },
-      data: { accepted: true },
-    });
-  }
   if (user.locked) throw new Error(ErrorCode.UserAccountLocked);
 
-  // Phone-otp accounts are never ADMIN — that role is reserved for the
-  // separate email/password path, so no validateRole/2FA step-up applies.
+  // Phone-otp accounts must never be ADMIN — that role is reserved for the
+  // separate email/password path, which is the only place validateRole's
+  // password+2FA step-up is enforced. Rather than trust that no ADMIN row
+  // ever acquires a phoneNumber, reject the login outright so this path can
+  // never mint a full-privilege session without that step-up.
+  if (user.role === UserPermissionRole.ADMIN) {
+    throw new Error(ErrorCode.InternalServerError);
+  }
+
+  // Staff onboarding: for a brand-new account provisioned purely by
+  // addStaffMember.handler.ts (placeholder "@phone.invalid" email, never
+  // independently signed up), this successful OTP login IS the staff
+  // member's first-ever access to that account, so it's safe to treat as
+  // their acceptance of the invite that created it.
+  //
+  // For a phone number that already belonged to a real, independent
+  // account, addStaffMember.handler.ts can still attach a pending
+  // Membership to it, but an ordinary login must NOT silently accept that
+  // invite on the account owner's behalf — they never asked to join. Those
+  // memberships stay pending until the user explicitly accepts them.
+  const isPlaceholderStaffAccount = user.email?.endsWith("@phone.invalid") ?? false;
+  if (isPlaceholderStaffAccount) {
+    const pendingMemberships = user.teams.filter((m) => !m.accepted);
+    if (pendingMemberships.length > 0) {
+      await prisma.membership.updateMany({
+        where: { userId: user.id, accepted: false },
+        data: { accepted: true },
+      });
+    }
+  }
+
   const hasActiveTeams = checkIfUserBelongsToActiveTeam(user);
   return AdapterUserPresenter.fromCalUser(user, user.role, hasActiveTeams);
 }

@@ -1,5 +1,3 @@
-import crypto from "node:crypto";
-
 import prisma from "@calcom/prisma";
 
 import { checkRateLimitAndThrowError } from "../checkRateLimitAndThrowError";
@@ -7,7 +5,7 @@ import { HttpError } from "../http-error";
 import { EvolutionClient } from "../whatsapp/evolutionClient";
 import { WhatsAppError } from "../whatsapp/errors";
 import { findWhatsAppConnectionForEventType } from "../whatsapp/resolveWhatsAppConnectionForEventType";
-import { constantTimeEqual, generateOtpCode, hashOtpCode } from "./hash";
+import { constantTimeEqual, generateOtpCode, hashOtpCode, signBookingVerificationPayload } from "./hash";
 import { normalizePhoneNumber } from "./phone";
 
 const OTP_EXPIRY_SECONDS = Number(process.env.OTP_EXPIRY_SECONDS ?? 300);
@@ -40,19 +38,38 @@ function canonicalizeBookingStart(bookingStartIso: string): string {
  * "Z", the other a local offset from dayjs().format()) — canonicalizing to
  * a UTC instant is what makes request-time and submit-time hashes match.
  */
+function bookingContextCanonical(input: {
+  whatsAppConnectionId: string;
+  phoneNumberE164: string;
+  eventTypeId: number;
+  bookingStartIso: string;
+  issuedAtMs: number;
+}): string {
+  return [
+    input.whatsAppConnectionId,
+    input.phoneNumberE164,
+    input.eventTypeId,
+    canonicalizeBookingStart(input.bookingStartIso),
+    input.issuedAtMs,
+  ].join("|");
+}
+
+/**
+ * Builds a signed, time-bound verification token: `<issuedAtMs>.<hmac>`. The
+ * HMAC (keyed by OTP_HASH_SECRET) is what makes the token unforgeable — the
+ * payload it signs is otherwise entirely attacker-knowable — and the
+ * embedded issuedAt is what lets enforcement reject stale tokens.
+ */
 function hashBookingContext(input: {
   whatsAppConnectionId: string;
   phoneNumberE164: string;
   eventTypeId: number;
   bookingStartIso: string;
+  issuedAtMs: number;
 }): string {
-  const canonical = [
-    input.whatsAppConnectionId,
-    input.phoneNumberE164,
-    input.eventTypeId,
-    canonicalizeBookingStart(input.bookingStartIso),
-  ].join("|");
-  return crypto.createHash("sha256").update(canonical).digest("hex");
+  const canonical = bookingContextCanonical(input);
+  const signature = signBookingVerificationPayload(canonical);
+  return `${input.issuedAtMs}.${signature}`;
 }
 
 export async function requestBookingOtp(input: {
@@ -138,15 +155,17 @@ export async function verifyBookingOtp(input: {
 
   await prisma.otpVerification.update({ where: { id: record.id }, data: { consumedAt: new Date() } });
 
-  // The verification token IS the context hash — enforcement below
-  // recomputes the same hash from the booking payload and compares, so
-  // there's nothing to look up: the token is self-verifying and can't be
-  // replayed against a different phone/event/slot.
+  // The verification token is an HMAC-signed, timestamped context hash —
+  // enforcement below recomputes the same signature from the booking
+  // payload and the embedded issuedAt, and rejects it once it's older than
+  // OTP_TOKEN_EXPIRY_SECONDS, so it's self-verifying, time-bound, and can't
+  // be replayed against a different phone/event/slot.
   const verificationToken = hashBookingContext({
     whatsAppConnectionId: input.whatsAppConnectionId,
     phoneNumberE164: phoneNumber,
     eventTypeId: input.eventTypeId,
     bookingStartIso: input.bookingStartIso,
+    issuedAtMs: Date.now(),
   });
 
   return { verificationToken, expiresIn: OTP_TOKEN_EXPIRY_SECONDS };
@@ -184,11 +203,25 @@ export async function enforcePhoneVerificationForPublicBooking(input: {
   }
 
   const phoneNumber = normalizePhoneNumber(input.phoneNumber);
+
+  const [issuedAtRaw, signature] = input.verificationToken.split(".");
+  const issuedAtMs = Number(issuedAtRaw);
+  if (!issuedAtRaw || !signature || !Number.isFinite(issuedAtMs)) {
+    throw new HttpError({ statusCode: 400, message: "Invalid verification token. Please verify your number again." });
+  }
+  if ((Date.now() - issuedAtMs) / 1000 > OTP_TOKEN_EXPIRY_SECONDS) {
+    throw new HttpError({
+      statusCode: 409,
+      message: "Your verification has expired. Please verify your number again.",
+    });
+  }
+
   const expectedToken = hashBookingContext({
     whatsAppConnectionId: connection.id,
     phoneNumberE164: phoneNumber,
     eventTypeId: input.eventTypeId,
     bookingStartIso: input.bookingStartIso,
+    issuedAtMs,
   });
 
   if (!constantTimeEqual(input.verificationToken, expectedToken)) {

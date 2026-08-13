@@ -70,40 +70,39 @@ export function WhatsAppPhoneVerification({ eventTypeId, bookingStartIso, phoneN
           Send WhatsApp verification code
         </Button>
       ) : (
-        <div className="space-y-2">
+        <div className="flex items-end gap-2">
           <TextField
+            containerClassName="flex-1"
             label="Verification code"
             name="whatsappOtpCode"
             inputMode="numeric"
             value={code}
             onChange={(e) => setCode(e.target.value)}
           />
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              size="sm"
-              loading={verifyOtpMutation.isPending}
-              disabled={code.length < 4 || !phoneNumber}
-              onClick={() => {
-                setError(undefined);
-                if (phoneNumber) {
-                  verifyOtpMutation.mutate({ eventTypeId, phoneNumber, code, bookingStartIso });
-                }
-              }}>
-              Verify
-            </Button>
-            <Button
-              type="button"
-              color="minimal"
-              size="sm"
-              loading={requestOtpMutation.isPending}
-              onClick={() => {
-                setError(undefined);
-                if (phoneNumber) requestOtpMutation.mutate({ eventTypeId, phoneNumber });
-              }}>
-              Resend code
-            </Button>
-          </div>
+          <Button
+            type="button"
+            size="sm"
+            loading={verifyOtpMutation.isPending}
+            disabled={code.length < 4 || !phoneNumber}
+            onClick={() => {
+              setError(undefined);
+              if (phoneNumber) {
+                verifyOtpMutation.mutate({ eventTypeId, phoneNumber, code, bookingStartIso });
+              }
+            }}>
+            Verify
+          </Button>
+          <Button
+            type="button"
+            color="minimal"
+            size="sm"
+            loading={requestOtpMutation.isPending}
+            onClick={() => {
+              setError(undefined);
+              if (phoneNumber) requestOtpMutation.mutate({ eventTypeId, phoneNumber });
+            }}>
+            Resend code
+          </Button>
         </div>
       )}
       {error && <Alert severity="error" message={error} />}

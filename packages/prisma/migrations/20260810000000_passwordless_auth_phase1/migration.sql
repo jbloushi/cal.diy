@@ -1,3 +1,9 @@
+-- AlterTable
+ALTER TABLE "public"."users" ADD COLUMN "phoneNumber" TEXT;
+
+-- CreateIndex
+CREATE UNIQUE INDEX "users_phoneNumber_key" ON "public"."users"("phoneNumber");
+
 -- CreateEnum
 CREATE TYPE "public"."WhatsAppConnectionStatus" AS ENUM ('CONNECTING', 'QR_REQUIRED', 'CONNECTED', 'ERROR');
 

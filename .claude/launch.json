@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        ".yarn/releases/yarn-4.12.0.cjs",
+        "run",
+        "dev"
+      ],
+      "port": 3000
+    }
+  ]
+}
