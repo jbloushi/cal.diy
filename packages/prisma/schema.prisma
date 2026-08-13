@@ -406,6 +406,11 @@ model User {
   /// @zod.import(["import { emailSchema } from '../../zod-utils'"]).custom.use(emailSchema)
   email               String
   emailVerified       DateTime?
+  // Passwordless tenant identity (Individual/Organization accounts). Nullable
+  // because platform ADMIN accounts never set one and keep email/password —
+  // Postgres allows multiple NULLs under a unique index, so this doesn't
+  // collide across every admin account.
+  phoneNumber         String?              @unique
   password            UserPassword?
   bio                 String?
   avatarUrl           String?
@@ -507,6 +512,7 @@ model User {
   agents                         Agent[]
   oAuthClients                   OAuthClient[]
   holidaySettings                UserHolidaySettings?
+  whatsAppConnection             WhatsAppConnection?
 
   autoOptInFeatures Boolean @default(false)
 
@@ -644,6 +650,8 @@ model Team {
   // Monthly proration tracking
   seatChangeLogs    SeatChangeLog[]
   monthlyProrations MonthlyProration[]
+
+  whatsAppConnection WhatsAppConnection?
 
   @@unique([slug, parentId])
   @@index([parentId])
@@ -2848,4 +2856,86 @@ model AttributeSyncFieldMapping {
 
   @@unique([integrationAttributeSyncId, attributeId])
   @@index([integrationAttributeSyncId])
+}
+
+enum WhatsAppConnectionStatus {
+  CONNECTING
+  QR_REQUIRED
+  CONNECTED
+  ERROR
+}
+
+// An Organization's (or Individual's) own WhatsApp number, connected via
+// Evolution API, used only to send BOOKING_VERIFICATION OTPs to that
+// account's own clients. Distinct from the single platform-owned WhatsApp
+// connection (env-configured, not a DB row) used for LOGIN OTPs.
+model WhatsAppConnection {
+  id              String                   @id @default(cuid())
+  instanceName    String                   @unique
+  status          WhatsAppConnectionStatus @default(CONNECTING)
+  connectedNumber String?
+  lastConnectedAt DateTime?
+
+  userId Int?
+  user   User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  teamId Int?
+  team   Team? @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  otpVerifications OtpVerification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId])
+  @@unique([teamId])
+}
+
+enum OtpPurpose {
+  LOGIN
+  BOOKING_VERIFICATION
+}
+
+// One table serves two distinct WhatsApp-OTP flows, distinguished by `purpose`:
+// LOGIN codes are sent by the single platform-owned WhatsApp number (signup/login
+// for Individuals and Organizations). BOOKING_VERIFICATION codes are sent by an
+// Organization's own connected WhatsApp number, to verify a client booking with
+// that org. Never hash/store the raw code — only codeHash.
+model OtpVerification {
+  id                   String              @id @default(cuid())
+  phoneNumber          String
+  purpose              OtpPurpose
+  codeHash             String
+  // For BOOKING_VERIFICATION only: which org's WhatsApp connection sent this
+  // code, so a code issued by one org can never verify a booking with another.
+  whatsAppConnectionId String?
+  whatsAppConnection   WhatsAppConnection? @relation(fields: [whatsAppConnectionId], references: [id], onDelete: Cascade)
+
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([phoneNumber, purpose, expiresAt])
+  @@index([whatsAppConnectionId, expiresAt])
+}
+
+// Shared top-level slug namespace: an Organization's public slug and a
+// User's username compete for the same bare path (platform.com/{slug}), so
+// uniqueness must be enforced across both models at once — something neither
+// User.username nor Team.slug's own unique indexes do on their own. Written
+// transactionally alongside the User/Team row it backs.
+enum SlugOwnerType {
+  USER
+  TEAM
+}
+
+model SlugRegistry {
+  id        String        @id @default(cuid())
+  slug      String        @unique
+  ownerType SlugOwnerType
+  // Polymorphic by ownerType — either a User.id or a Team.id, never both.
+  ownerId   Int
+  createdAt DateTime      @default(now())
+
+  @@index([ownerType, ownerId])
 }

@@ -1,5 +1,6 @@
 import { getDefaultLocations } from "@calcom/app-store/_utils/getDefaultLocations";
 import { DailyLocationType } from "@calcom/app-store/constants";
+import { applyPhoneOnlyBookingFields } from "@calcom/features/eventtypes/lib/bookingFieldsManager";
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
 import type { PrismaClient } from "@calcom/prisma";
 import { Prisma } from "@calcom/prisma/client";
@@ -154,6 +155,17 @@ export const createHandler = async ({ ctx, input }: CreateOptions) => {
       ...data,
       profileId: profile.id,
     });
+
+    // Regression guard for the exact bug that motivated this feature: a new
+    // event type under an account with WhatsApp already connected must come
+    // up phone-only from creation, not silently fall back to email.
+    const connection = await ctx.prisma.whatsAppConnection.findUnique({
+      where: teamId ? { teamId } : { userId },
+    });
+    if (connection) {
+      await applyPhoneOnlyBookingFields(eventType.id);
+    }
+
     return { eventType };
   } catch (e) {
     console.warn(e);

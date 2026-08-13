@@ -300,7 +300,72 @@ export const CalComCredentialsProvider = CredentialsProvider({
   authorize: authorizeCredentials,
 });
 
-const providers: Provider[] = [CalComCredentialsProvider];
+/**
+ * Authorize function for the passwordless phone-otp provider. Tenant
+ * accounts (Individual/Organization owners and staff) authenticate this
+ * way exclusively — platform ADMIN accounts always use the email/password
+ * `credentials` provider above and never this one. The OTP itself was
+ * already sent+verified server-side by the /api/auth/otp routes before this
+ * ever runs; this function's job is just to consume the code once more
+ * (single source of truth, no client-trusted "already verified" flag) and
+ * mint the session user.
+ */
+export async function authorizePhoneOtp(
+  credentials: Record<"phoneNumber" | "otpCode", string> | undefined
+): Promise<User | null> {
+  if (!credentials?.phoneNumber || !credentials?.otpCode) {
+    throw new Error(ErrorCode.InternalServerError);
+  }
+
+  const { verifyAndConsumeLoginOtp } = await import("@calcom/lib/otp/otpService");
+  const { phoneNumber } = await verifyAndConsumeLoginOtp({
+    rawPhoneNumber: credentials.phoneNumber,
+    code: credentials.otpCode,
+  });
+
+  const userRepo = new UserRepository(prisma);
+  let user = await userRepo.findByPhoneNumberAndIncludeProfiles({ phoneNumber });
+  if (!user) {
+    const created = await userRepo.findOrCreateByPhoneNumber({ phoneNumber });
+    user = await userRepo.findByPhoneNumberAndIncludeProfiles({ phoneNumber: created.phoneNumber! });
+  }
+  if (!user) throw new Error(ErrorCode.InternalServerError);
+
+  // Staff onboarding: an org owner creates the User row (phone + pending
+  // Membership) before the staff member ever logs in — this successful OTP
+  // login IS their acceptance of that invite, so flip it to accepted here.
+  // Known limitation: if this phone number already has an unrelated
+  // account and someone invites it without the holder's knowledge, their
+  // next routine login would also accept that invite silently — acceptable
+  // for v1 (matches the confirmed "staff self-verifies via OTP" design),
+  // not addressed with an explicit accept/decline step yet.
+  const pendingMemberships = user.teams.filter((m) => !m.accepted);
+  if (pendingMemberships.length > 0) {
+    await prisma.membership.updateMany({
+      where: { userId: user.id, accepted: false },
+      data: { accepted: true },
+    });
+  }
+  if (user.locked) throw new Error(ErrorCode.UserAccountLocked);
+
+  // Phone-otp accounts are never ADMIN — that role is reserved for the
+  // separate email/password path, so no validateRole/2FA step-up applies.
+  const hasActiveTeams = checkIfUserBelongsToActiveTeam(user);
+  return AdapterUserPresenter.fromCalUser(user, user.role, hasActiveTeams);
+}
+
+export const PhoneOtpCredentialsProvider = CredentialsProvider({
+  id: "phone-otp",
+  name: "Phone",
+  type: "credentials",
+  credentials: {
+    phoneNumber: { label: "Phone number", type: "tel" },
+    otpCode: { label: "Verification code", type: "text" },
+  },
+  authorize: authorizePhoneOtp,
+});
+
+const providers: Provider[] = [CalComCredentialsProvider, PhoneOtpCredentialsProvider];
 type SamlIdpUser = {
   id: number;
   userId: number;

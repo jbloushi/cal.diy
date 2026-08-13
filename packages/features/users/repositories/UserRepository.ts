@@ -371,6 +371,47 @@ export class UserRepository {
     };
   }
 
+  /**
+   * Same select shape as findByEmailAndIncludeProfilesAndPassword (including
+   * password/2FA fields, so the return type stays structurally identical for
+   * AdapterUserPresenter.fromCalUser) — keyed by phoneNumber instead, used by
+   * the phone-otp NextAuth provider. A phone-otp account never has these set.
+   */
+  async findByPhoneNumberAndIncludeProfiles({ phoneNumber }: { phoneNumber: string }) {
+    const user = await this.prismaClient.user.findUnique({
+      where: { phoneNumber },
+      select: {
+        locked: true,
+        role: true,
+        id: true,
+        uuid: true,
+        username: true,
+        name: true,
+        email: true,
+        metadata: true,
+        identityProvider: true,
+        password: true,
+        twoFactorEnabled: true,
+        twoFactorSecret: true,
+        backupCodes: true,
+        locale: true,
+        teams: {
+          include: {
+            team: {
+              select: teamSelect,
+            },
+          },
+        },
+        createdDate: true,
+      },
+    });
+
+    if (!user) return null;
+
+    const allProfiles = await ProfileRepository.findAllProfilesForUserIncludingMovedUser(user);
+    return { ...user, allProfiles };
+  }
+
   async findById({ id }: { id: number }) {
     const user = await this.prismaClient.user.findUnique({
       where: {
@@ -957,6 +998,51 @@ export class UserRepository {
 
     return user;
   }
+
+  /**
+   * Passwordless tenant login/signup: looks up a User by their verified
+   * phone number, creating one on first login if none exists. Never sets a
+   * `UserPassword` row — phone-otp accounts must never become usable via the
+   * email/password credentials provider (that's reserved for platform
+   * ADMIN accounts). `email` is a placeholder, unique, non-deliverable
+   * address — cal.com's schema requires `email` to be non-null, but
+   * passwordless accounts have no real one until the user adds one later
+   * (optional, non-auth field per the product decision).
+   */
+  async findOrCreateByPhoneNumber({ phoneNumber, name }: { phoneNumber: string; name?: string }) {
+    const existing = await this.prismaClient.user.findUnique({ where: { phoneNumber } });
+    if (existing) return existing;
+
+    const t = await getTranslation("en", "common");
+    const availability = getAvailabilityFromSchedule(DEFAULT_SCHEDULE);
+    const placeholderEmail = `${phoneNumber.replace(/[^0-9]/g, "")}@phone.invalid`;
+
+    return this.prismaClient.user.create({
+      data: {
+        phoneNumber,
+        email: placeholderEmail,
+        name,
+        identityProvider: "CAL",
+        creationSource: "WEBAPP",
+        locked: false,
+        schedules: {
+          create: {
+            name: t("default_schedule_name"),
+            availability: {
+              createMany: {
+                data: availability.map((schedule) => ({
+                  days: schedule.days,
+                  startTime: schedule.startTime,
+                  endTime: schedule.endTime,
+                })),
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
   async getUserAdminTeams({ userId }: { userId: number }) {
     return await this.prismaClient.user.findUnique({
       where: {

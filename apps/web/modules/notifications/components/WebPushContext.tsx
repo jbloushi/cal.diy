@@ -34,6 +34,10 @@ export function WebPushProvider({ children }: ProviderProps) {
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
+    // Registration is flaky in local/sandboxed dev browsers (proxies,
+    // automation tooling) for reasons unrelated to the app — don't spam the
+    // console outside production, where a real failure is worth surfacing.
+    if (process.env.NODE_ENV !== "production") return;
 
     navigator.serviceWorker
       .register("/service-worker.js")

@@ -1,30 +1,31 @@
-import { withAppDirSsr } from "app/WithAppDirSsr";
-import type { PageProps } from "app/_types";
 import { _generateMetadata } from "app/_utils";
-import { cookies, headers } from "next/headers";
+import Link from "next/link";
 
-import { buildLegacyCtx } from "@lib/buildLegacyCtx";
-import { getServerSideProps } from "@lib/signup/getServerSideProps";
-
-import type { SignupProps } from "~/signup-view";
-import Signup from "~/signup-view";
+import { PhoneAuthView } from "~/auth/components/PhoneAuthView";
 
 export const generateMetadata = async () =>
-  await _generateMetadata(
-    (t) => t("sign_up"),
-    (t) => t("sign_up"),
-    undefined,
-    undefined,
-    "/signup"
+  await _generateMetadata((t) => t("sign_up"), (t) => t("sign_up"), undefined, undefined, "/signup");
+
+// Every tenant account (Individual, Organization owner, Organization
+// staff) signs up and logs in the same way — phone + WhatsApp OTP. There is
+// no separate email/password signup path anymore for tenants; that
+// remains only for platform ADMIN accounts via /auth/login.
+const SignupPage = () => {
+  return (
+    <div className="bg-subtle flex min-h-screen items-center justify-center p-4">
+      <div className="bg-default border-subtle w-full max-w-md rounded-lg border p-6">
+        <h1 className="font-cal mb-1 text-2xl">Create your account</h1>
+        <p className="text-subtle mb-6 text-sm">We&apos;ll text you a code on WhatsApp — no password needed.</p>
+        <PhoneAuthView callbackUrl="/getting-started/account-type" />
+        <p className="text-subtle mt-6 text-sm">
+          Already have an account?{" "}
+          <Link href="/auth/login" className="text-emphasis underline">
+            Log in
+          </Link>
+        </p>
+      </div>
+    </div>
   );
-
-const getData = withAppDirSsr<SignupProps>(getServerSideProps);
-
-const ServerPage = async ({ params, searchParams }: PageProps) => {
-  const context = buildLegacyCtx(await headers(), await cookies(), await params, await searchParams);
-
-  const props = await getData(context);
-  return <Signup {...props} />;
 };
 
-export default ServerPage;
+export default SignupPage;

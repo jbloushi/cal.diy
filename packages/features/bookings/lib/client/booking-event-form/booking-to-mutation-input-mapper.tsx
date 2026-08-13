@@ -29,6 +29,7 @@ export type BookingOptions = {
   orgSlug?: string;
   isDryRunProp?: boolean;
   verificationCode?: string;
+  phoneVerificationToken?: string;
   rrHostSubsetIds?: number[];
 };
 
@@ -53,6 +54,7 @@ export const mapBookingToMutationInput = ({
   orgSlug,
   isDryRunProp,
   verificationCode,
+  phoneVerificationToken,
   rrHostSubsetIds,
 }: BookingOptions): BookingCreateBody => {
   const searchParams = new URLSearchParams(window.location.search);
@@ -91,6 +93,7 @@ export const mapBookingToMutationInput = ({
     _isDryRun,
     dub_id,
     verificationCode,
+    phoneVerificationToken,
   };
 };
 

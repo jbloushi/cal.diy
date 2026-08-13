@@ -14,13 +14,16 @@ import { Alert } from "@calcom/ui/components/alert";
 import { Button } from "@calcom/ui/components/button";
 import { EmptyScreen } from "@calcom/ui/components/empty-screen";
 import { Form } from "@calcom/ui/components/form";
+import { ATTENDEE_PHONE_NUMBER_FIELD } from "@calcom/lib/bookings/SystemField";
+import { trpc } from "@calcom/trpc/react";
 import type { TFunction } from "i18next";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FieldError } from "react-hook-form";
 import type { IUseBookingErrors, IUseBookingLoadingStates } from "../../hooks/useBookings";
 import { BookingFields } from "./BookingFields";
 import { FormSkeleton } from "./Skeleton";
+import { WhatsAppPhoneVerification } from "./WhatsAppPhoneVerification";
 
 type BookEventFormProps = {
   onCancel?: () => void;
@@ -64,7 +67,7 @@ export const BookEventForm = ({
   eventQuery: {
     isError: boolean;
     isPending: boolean;
-    data?: Pick<BookerEvent, "price" | "currency" | "metadata" | "bookingFields" | "locations"> | null;
+    data?: Pick<BookerEvent, "id" | "price" | "currency" | "metadata" | "bookingFields" | "locations"> | null;
   };
 }) => {
   const eventType = eventQuery.data;
@@ -72,6 +75,8 @@ export const BookEventForm = ({
   const bookingData = useBookerStoreContext((state) => state.bookingData);
   const rescheduleUid = useBookerStoreContext((state) => state.rescheduleUid);
   const username = useBookerStoreContext((state) => state.username);
+  const setPhoneVerificationToken = useBookerStoreContext((state) => state.setPhoneVerificationToken);
+  const phoneVerificationToken = useBookerStoreContext((state) => state.phoneVerificationToken);
   const isPlatformBookerEmbed = useIsPlatformBookerEmbed();
   const { timeFormat, timezone } = useBookerTime();
 
@@ -88,6 +93,31 @@ export const BookEventForm = ({
     if (!eventType) return "USD";
     return getPaymentAppData(eventType)?.currency || "USD";
   }, [eventType]);
+
+  const requiresVerificationQuery = trpc.viewer.public.getRequiresWhatsAppVerification.useQuery(
+    { eventTypeId: eventType?.id ?? -1 },
+    { enabled: !!eventType?.id }
+  );
+  const phoneFieldName =
+    eventType?.bookingFields?.find((field) => field.name === ATTENDEE_PHONE_NUMBER_FIELD)?.name ??
+    eventType?.bookingFields?.find((field) => field.type === "phone")?.name ??
+    ATTENDEE_PHONE_NUMBER_FIELD;
+  const watchedPhoneNumber = bookingForm.watch(`responses.${phoneFieldName}` as "responses") as unknown as
+    | string
+    | undefined;
+
+  // A stale token from a previous phone number or time slot must never be
+  // silently reused for a different booking — the server would reject it
+  // anyway (context-bound hash), but clearing it client-side avoids the UI
+  // hanging onto a false "verified" state after the booker changes either.
+  const clearedContextRef = useRef({ timeslot, phoneNumber: watchedPhoneNumber });
+  useEffect(() => {
+    const prev = clearedContextRef.current;
+    if (prev.timeslot === timeslot && prev.phoneNumber === watchedPhoneNumber) return;
+    clearedContextRef.current = { timeslot, phoneNumber: watchedPhoneNumber };
+    setPhoneVerificationToken(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeslot, watchedPhoneNumber]);
 
   if (eventQuery.isError) return <Alert severity="warning" message={t("error_booking_event")} />;
   if (eventQuery.isPending || !eventQuery.data) return <FormSkeleton />;
@@ -132,6 +162,13 @@ export const BookEventForm = ({
           isPaidEvent={isPaidEvent}
           paymentCurrency={paymentCurrency}
         />
+        {requiresVerificationQuery.data?.requiresWhatsAppVerification && (
+          <WhatsAppPhoneVerification
+            eventTypeId={eventType.id}
+            bookingStartIso={timeslot}
+            phoneNumber={watchedPhoneNumber}
+          />
+        )}
         {errors.hasFormErrors || errors.hasDataErrors ? (
           <div data-testid="booking-fail">
             <Alert
@@ -237,7 +274,10 @@ export const BookEventForm = ({
             type="submit"
             color="primary"
             disabled={
-              (!!shouldRenderCaptcha && !watchedCfToken) || isTimeslotUnavailable || confirmButtonDisabled
+              (!!shouldRenderCaptcha && !watchedCfToken) ||
+              isTimeslotUnavailable ||
+              confirmButtonDisabled ||
+              (!!requiresVerificationQuery.data?.requiresWhatsAppVerification && !phoneVerificationToken)
             }
             loading={
               loadingStates.creatingBooking ||

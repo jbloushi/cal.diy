@@ -76,6 +76,11 @@ const getTabs = (
           href: "/settings/my-account/push-notifications",
           trackingMetadata: { section: "my_account", page: "push_notifications" },
         },
+        {
+          name: "whatsapp",
+          href: "/settings/my-account/whatsapp",
+          trackingMetadata: { section: "my_account", page: "whatsapp" },
+        },
         // TODO
         // { name: "referrals", href: "/settings/my-account/referrals" },
       ],
@@ -278,6 +283,9 @@ const useTabs = ({
 }) => {
   const session = useSession();
   const { data: user } = trpc.viewer.me.get.useQuery({ includePasswordAdded: true });
+  const { data: myOrganizations } = trpc.viewer.organizations.listMine.useQuery(undefined, {
+    enabled: !!session.data?.user.id,
+  });
   const orgBranding = null as { id?: number; slug?: string; name?: string; logoUrl?: string | null } | null;
   const isAdmin = session.data?.user.role === UserPermissionRole.ADMIN;
 
@@ -365,15 +373,45 @@ const useTabs = ({
       return tab;
     });
 
+    // One nav tab per Organization the caller belongs to (owner or staff) —
+    // there's no single "my org" since a user could staff more than one.
+    const myOrgTabs: VerticalTabItemProps[] = (myOrganizations ?? []).map((org: { id: number; name: string }) => ({
+      name: org.name,
+      href: `/settings/teams/${org.id}/members`,
+      icon: "building" as const,
+      children: [
+        {
+          name: "members",
+          href: `/settings/teams/${org.id}/members`,
+          trackingMetadata: { section: "my_organizations", page: "members" },
+        },
+        {
+          name: "whatsapp",
+          href: `/settings/teams/${org.id}/whatsapp`,
+          trackingMetadata: { section: "my_organizations", page: "whatsapp" },
+        },
+      ],
+    }));
+
+    const myAccountIndex = processedTabs.findIndex((tab) => tab.href === "/settings/my-account");
+    const tabsWithOrgs =
+      myAccountIndex === -1
+        ? [...processedTabs, ...myOrgTabs]
+        : [
+            ...processedTabs.slice(0, myAccountIndex + 1),
+            ...myOrgTabs,
+            ...processedTabs.slice(myAccountIndex + 1),
+          ];
+
     // check if name is in adminRequiredKeys
-    return processedTabs.filter((tab) => {
+    return tabsWithOrgs.filter((tab) => {
       if (organizationRequiredKeys.includes(tab.name)) return !!orgBranding;
       if (tab.name === "other_teams" && !permissions?.canUpdateOrganization) return false;
 
       if (isAdmin) return true;
       return !adminRequiredKeys.includes(tab.name);
     });
-  }, [isAdmin, orgBranding, user, isDelegationCredentialEnabled, isPbacEnabled, permissions]);
+  }, [isAdmin, orgBranding, user, isDelegationCredentialEnabled, isPbacEnabled, permissions, myOrganizations]);
 
   return processTabsMemod;
 };

@@ -187,9 +187,19 @@ export default function Login({
           </div>
 
           {/* Heading */}
-          <p className="mb-8 text-center text-sm text-subtle" data-testid="login-subtitle">
+          <p className="mb-2 text-center text-sm text-subtle" data-testid="login-subtitle">
             {twoFactorRequired ? t("2fa_code") : t("welcome_back_sign_in")}
           </p>
+
+          {/* Individuals/Organizations sign in with a phone number — this
+              form (email/password) is for platform admin accounts only. */}
+          {!twoFactorRequired && (
+            <p className="mb-6 text-center text-sm">
+              <Link href="/signup" className="text-emphasis underline">
+                Log in with your phone number
+              </Link>
+            </p>
+          )}
 
           <FormProvider {...methods}>
             {/* Social Login Buttons */}

@@ -12,6 +12,8 @@ export const ENDPOINTS = [
   "calendars",
   "calVideo",
   "credentials",
+  "whatsappConnection",
+  "organizations",
   "deploymentSetup",
   "eventTypes",
   "eventTypesHeavy",

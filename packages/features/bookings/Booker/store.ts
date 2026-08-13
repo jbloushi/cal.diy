@@ -320,6 +320,13 @@ export type BookerStore = {
   verificationCode: string | null;
   setVerificationCode: (code: string | null) => void;
   /**
+   * Signed, booking-context-bound token from a successful WhatsApp OTP
+   * verification. Cleared on slot/phone change (see BookEventForm.tsx) so a
+   * stale token from a previous slot/number can never be silently reused.
+   */
+  phoneVerificationToken: string | null;
+  setPhoneVerificationToken: (token: string | null) => void;
+  /**
    * Current month being viewed. Format is YYYY-MM.
    */
   month: string | null;
@@ -516,6 +523,10 @@ export const createBookerStore = () =>
     verificationCode: null,
     setVerificationCode: (code: string | null) => {
       set({ verificationCode: code });
+    },
+    phoneVerificationToken: null,
+    setPhoneVerificationToken: (token: string | null) => {
+      set({ phoneVerificationToken: token });
     },
     month:
       getQueryParam("month") ||

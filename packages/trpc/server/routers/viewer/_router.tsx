@@ -22,10 +22,12 @@ import { i18nRouter } from "./i18n/_router";
 import { meRouter } from "./me/_router";
 import { oAuthRouter } from "./oAuth/_router";
 import { oooRouter } from "./ooo/_router";
+import { organizationsRouter } from "./organizations/_router";
 import { slotsRouter } from "./slots/_router";
 import { travelSchedulesRouter } from "./travelSchedules/_router";
 import { userAdminRouter } from "./users/_router";
 import { webhookRouter } from "./webhook/_router";
+import { whatsappConnectionRouter } from "./whatsappConnection/_router";
 
 export const viewerRouter = router({
   loggedInViewerRouter,
@@ -43,6 +45,8 @@ export const viewerRouter = router({
   availability: availabilityRouter,
   timezones: timezonesRouter,
   webhook: webhookRouter,
+  whatsappConnection: whatsappConnectionRouter,
+  organizations: organizationsRouter,
   slots: slotsRouter,
   i18n: i18nRouter,
   features: featureFlagRouter,

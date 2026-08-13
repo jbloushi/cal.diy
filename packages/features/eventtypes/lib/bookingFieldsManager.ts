@@ -1,4 +1,5 @@
 import { getBookingFieldsWithSystemFields } from "@calcom/features/bookings/lib/getBookingFields";
+import { ATTENDEE_PHONE_NUMBER_FIELD } from "@calcom/lib/bookings/SystemField";
 import { prisma } from "@calcom/prisma";
 import type { EventType } from "@calcom/prisma/client";
 import type { eventTypeBookingFields } from "@calcom/prisma/zod-utils";
@@ -137,4 +138,36 @@ export async function removeBookingField(
       bookingFields: newFields,
     },
   });
+}
+
+/**
+ * Hides email and requires phone on the booking form — the direct fix for
+ * "form shows email" when an account's WhatsApp is connected. Written into
+ * the stored bookingFields (not computed dynamically at render time) so
+ * client and server always read the exact same value; `upsertBookingField`
+ * can't express "hidden", only required/sources, hence a dedicated helper.
+ */
+export async function applyPhoneOnlyBookingFields(eventTypeId: EventType["id"]) {
+  const eventType = await getEventType(eventTypeId);
+
+  const newFields = eventType.bookingFields.map((f) => {
+    if (f.name === "email") return { ...f, hidden: true, required: false };
+    if (f.name === ATTENDEE_PHONE_NUMBER_FIELD) return { ...f, hidden: false, required: true };
+    return f;
+  });
+
+  await prisma.eventType.update({
+    where: { id: eventTypeId },
+    data: { bookingFields: newFields },
+  });
+}
+
+export async function applyPhoneOnlyBookingFieldsForOwner(owner: { userId: number } | { teamId: number }) {
+  const eventTypes = await prisma.eventType.findMany({
+    where: "userId" in owner ? { userId: owner.userId } : { teamId: owner.teamId },
+    select: { id: true },
+  });
+  for (const eventType of eventTypes) {
+    await applyPhoneOnlyBookingFields(eventType.id);
+  }
 }

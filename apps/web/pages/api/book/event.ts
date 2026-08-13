@@ -2,6 +2,8 @@ import process from "node:process";
 import { getServerSession } from "@calcom/features/auth/lib/getServerSession";
 import { getRegularBookingService } from "@calcom/features/bookings/di/RegularBookingService.container";
 import { BotDetectionService } from "@calcom/features/bot-detection";
+import { enforcePhoneVerificationForPublicBooking } from "@calcom/lib/otp/bookingVerification";
+import { ATTENDEE_PHONE_NUMBER_FIELD } from "@calcom/lib/bookings/SystemField";
 import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
 import { FeaturesRepository } from "@calcom/features/flags/features.repository";
 import { checkRateLimitAndThrowError } from "@calcom/lib/checkRateLimitAndThrowError";
@@ -40,6 +42,15 @@ async function handler(req: NextApiRequest & { userId?: number; traceContext: Tr
   });
 
   const session = await getServerSession({ req });
+
+  await enforcePhoneVerificationForPublicBooking({
+    eventTypeId: req.body.eventTypeId,
+    phoneNumber: req.body.responses?.[ATTENDEE_PHONE_NUMBER_FIELD],
+    bookingStartIso: req.body.start,
+    verificationToken: req.body.phoneVerificationToken,
+    loggedInUserId: session?.user?.id,
+  });
+
   /* To mimic API behavior and comply with types */
   req.body = {
     ...req.body,
